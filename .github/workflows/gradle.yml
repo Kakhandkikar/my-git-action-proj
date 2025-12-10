@@ -14,28 +14,28 @@ env:
   FLATLAF_VER: "3.6.2"
   MAIN_CLASS: "expense_income_tracker.ExpensesIncomesTracker"
   JAR_NAME: "ExpenseTracker.jar"
-  IMAGE_REPO: "${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}"
+  IMAGE_REPO: "ziyadkak/expense-tracker"
 
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Install helper packages
+      - name: Install utilities
         run: |
           sudo apt-get update -y
           sudo apt-get install -y unzip
 
-      - name: Download FlatLaf dependency
+      - name: Download FlatLaf
         run: |
           mkdir -p libs
           curl -L -o libs/flatlaf-${FLATLAF_VER}.jar \
@@ -45,10 +45,11 @@ jobs:
       - name: Compile Java sources
         run: |
           mkdir -p bin
+          # adjust the find path if your sources are under a different folder
           find . -name "*.java" > sources.txt
           javac -cp "libs/*" -d bin @sources.txt
 
-      - name: Build fat jar
+      - name: Build fat (uber) JAR
         run: |
           rm -rf tmp_jar tmp_unzip meta
           mkdir -p tmp_jar tmp_unzip meta
@@ -57,12 +58,13 @@ jobs:
           cp -r tmp_unzip/* tmp_jar/ || true
           echo "Main-Class: ${MAIN_CLASS}" > meta/manifest.txt
           jar cfm ${JAR_NAME} meta/manifest.txt -C tmp_jar .
+          jar tf ${JAR_NAME} | sed -n '1,40p'
 
-      - name: Smoke test jar
+      - name: Smoke-test JAR (headless)
         run: |
           java -Djava.awt.headless=true -jar ${JAR_NAME} || true
 
-      - name: Upload artifact
+      - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: ExpenseTracker-JAR
@@ -97,7 +99,6 @@ jobs:
           tags: |
             docker.io/${{ env.IMAGE_REPO }}:latest
             docker.io/${{ env.IMAGE_REPO }}:${{ github.sha }}
-          # optionally add platforms: linux/amd64,linux/arm64 to enable multi-arch
 
       - name: Create GitHub Release
         id: create_release
@@ -105,9 +106,8 @@ jobs:
         with:
           tag_name: v${{ github.run_number }}
           release_name: ExpenseTracker-${{ github.run_number }}
-          body: Automated release of ExpenseTracker.jar
+          body: "Automated release for ExpenseTracker.jar"
           draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
