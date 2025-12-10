@@ -1,4 +1,4 @@
-name: Java Build, Fat-JAR & Release
+name: Build, Release & Docker Publish
 
 on:
   push:
@@ -8,17 +8,23 @@ on:
 
 permissions:
   contents: write
+  packages: write
+  pull-requests: write
 
 env:
   FLATLAF_VER: "3.6.2"
   MAIN_CLASS: "expense_income_tracker.ExpensesIncomesTracker"
   JAR_NAME: "ExpenseTracker.jar"
+  IMAGE_NAME: "expense-tracker"                   # image name (repo owner will prefix)
+  IMAGE_TAG_SHA: "${{ github.sha }}"
+  IMAGE_TAG_LATEST: "latest"
 
 jobs:
-  build-and-release:
+  build-and-publish:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -52,33 +58,25 @@ jobs:
       - name: Create fat (uber) jar including FlatLaf
         run: |
           set -eux
-          # prepare temporary layout
-          rm -rf tmp_jar tmp_unzip
-          mkdir -p tmp_jar
-
+          rm -rf tmp_jar tmp_unzip meta
+          mkdir -p tmp_jar tmp_unzip
           # copy compiled classes into tmp_jar
-          cp -r bin/* tmp_jar/
-
-          # unzip all dependency jars into a temporary folder, then copy classes/resources into tmp_jar
-          mkdir -p tmp_unzip
+          cp -r bin/* tmp_jar/ || true
+          # unzip dependencies into tmp_unzip
           for j in libs/*.jar; do
             unzip -q -o "$j" -d tmp_unzip
           done
-
-          # copy contents from tmp_unzip into tmp_jar (overwrite duplicates from libs if any)
+          # copy dependency content into tmp_jar (overwrite allowed)
           cp -r tmp_unzip/* tmp_jar/ || true
-
-          # create manifest with Main-Class
+          # manifest
           mkdir -p meta
           echo "Main-Class: ${MAIN_CLASS}" > meta/manifest.txt
-          # create the fat jar
           jar cfm ${JAR_NAME} meta/manifest.txt -C tmp_jar .
-          # show a quick listing
           jar tf ${JAR_NAME} | sed -n '1,40p'
 
       - name: Run the jar (smoke test)
         run: |
-          # run the jar to ensure it starts (it may open UI; using headless to avoid display issues)
+          # run the jar headless to avoid GUI blocking in CI
           java -Djava.awt.headless=true -jar ${JAR_NAME} || true
           echo "Smoke run finished (exit code ignored)."
 
@@ -109,3 +107,45 @@ jobs:
           asset_content_type: application/java-archive
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure Dockerfile exists (create minimal Dockerfile if missing)
+        run: |
+          # If your repo already has a Dockerfile, this step will not overwrite it.
+          if [ ! -f Dockerfile ]; then
+            cat > Dockerfile <<'DOCKERFILE'
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY ExpenseTracker.jar /app/ExpenseTracker.jar
+# Use non-root user if you prefer: USER 1000
+ENTRYPOINT ["java","-jar","/app/ExpenseTracker.jar"]
+DOCKERFILE
+            echo "Created minimal Dockerfile"
+          else
+            echo "Dockerfile exists, leaving as-is"
+          fi
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image (sha tag)
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_SHA }}
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_LATEST }}
+          # optionally enable cache if you want:
+          # cache-from: type=gha
+          # cache-to: type=gha,mode=max
+
+      - name: Write image info to summary
+        run: |
+          echo "Image pushed:"
+          echo " - ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_SHA }}"
+          echo " - ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_LATEST }}"
+
