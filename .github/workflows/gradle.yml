@@ -3,7 +3,125 @@ name: Java Build, Release & Publish
 # Ensure tokens have rights for releases and packages
 permissions:
   contents: write       # for creating releases and uploading release assets
-  packages: write       # for publishing to GitHub Packages
+  packages: write       # for publishing to GitHub name: Java Build, Release & Publish
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  FLATLAF_VER: "3.6.2"
+  MAVEN_GROUP_ID: "com.github.${{ github.repository_owner }}"
+  MAVEN_ARTIFACT_ID: "expense-tracker"
+  MAVEN_VERSION: "0.1.0"
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+        # DO NOT use cache: 'maven' because repo has no pom.xml
+
+    - name: Install Maven
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y maven
+        mvn -v
+
+    - name: Download FlatLaf dependency
+      run: |
+        mkdir -p libs
+        curl -L -o libs/flatlaf-${FLATLAF_VER}.jar \
+          https://repo1.maven.org/maven2/com/formdev/flatlaf/${FLATLAF_VER}/flatlaf-${FLATLAF_VER}.jar
+        ls -la libs
+
+    - name: Compile Java files (include libs on classpath)
+      run: |
+        mkdir -p bin
+        find . -name "*.java" > sources.txt
+        # compile with FlatLaf and any other jars placed in libs/
+        javac -cp "libs/*" -d bin @sources.txt
+
+    - name: Package into JAR (set Main-Class)
+      run: |
+        MAIN_CLASS=expense_income_tracker.ExpensesIncomesTracker
+        jar cfe ExpenseTracker.jar $MAIN_CLASS -C bin .
+        jar tf ExpenseTracker.jar | sed -n '1,20p'
+
+    - name: Upload CI artifact (short-term)
+      uses: actions/upload-artifact@v4
+      with:
+        name: ExpenseTracker-JAR
+        path: ExpenseTracker.jar
+
+    - name: Create GitHub Release
+      id: create_release
+      uses: actions/create-release@v1
+      with:
+        tag_name: v${{ github.run_number }}
+        release_name: ExpenseTracker-${{ github.run_number }}
+        body: Automated release of ExpenseTracker.jar
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload JAR to GitHub Release
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./ExpenseTracker.jar
+        asset_name: ExpenseTracker.jar
+        asset_content_type: application/java-archive
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Configure Maven settings for GitHub Packages
+      run: |
+        mkdir -p ~/.m2
+        cat > ~/.m2/settings.xml <<'EOF'
+        <settings>
+          <servers>
+            <server>
+              <id>github</id>
+              <username>${env.GITHUB_ACTOR}</username>
+              <password>${env.GITHUB_TOKEN}</password>
+            </server>
+          </servers>
+        </settings>
+        EOF
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Deploy JAR to GitHub Packages (Maven)
+      run: |
+        # Deploy the built jar to GitHub Packages with mvn deploy:deploy-file
+        mvn deploy:deploy-file \
+          -DgroupId=${MAVEN_GROUP_ID} \
+          -DartifactId=${MAVEN_ARTIFACT_ID} \
+          -Dversion=${MAVEN_VERSION} \
+          -Dpackaging=jar \
+          -Dfile=ExpenseTracker.jar \
+          -DrepositoryId=github \
+          -Durl=https://maven.pkg.github.com/${{ github.repository }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+Packages
   actions: read
 
 on:
