@@ -2,9 +2,9 @@ name: Java Build for Expense Tracker
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build:
@@ -20,14 +20,27 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Compile Java files
+    - name: Download FlatLaf dependency
+      run: |
+        mkdir -p libs
+        # change version if you want a specific one
+        FLATLAF_VER=3.6.2
+        curl -L -o libs/flatlaf-${FLATLAF_VER}.jar \
+          https://repo1.maven.org/maven2/com/formdev/flatlaf/${FLATLAF_VER}/flatlaf-${FLATLAF_VER}.jar
+        ls -l libs
+
+    - name: Compile Java files (including FlatLaf on classpath)
       run: |
         mkdir -p bin
         find . -name "*.java" > sources.txt
-        javac -d bin @sources.txt
+        # compile with flatlaf on classpath
+        javac -cp "libs/*" -d bin @sources.txt
 
-    - name: Package into JAR
-      run: jar cfe ExpenseTracker.jar ExpenseIncomeTracker -C bin .
+    - name: Package into JAR (set Main-Class to your FQN)
+      run: |
+        # Replace this FQN if your main class has a different name/package.
+        MAIN_CLASS=expense_income_tracker.ExpensesIncomesTracker
+        jar cfe ExpenseTracker.jar $MAIN_CLASS -C bin .
 
     - name: Upload JAR as artifact
       uses: actions/upload-artifact@v4
@@ -35,5 +48,7 @@ jobs:
         name: ExpenseTracker
         path: ExpenseTracker.jar
 
-    - name: Run the application
-      run: java -cp bin ExpenseIncomeTracker
+    - name: Run the application (use jar + libs on classpath)
+      run: |
+        # run with both the built jar and the dependency jar on the classpath
+        java -cp "ExpenseTracker.jar:libs/*" expense_income_tracker.ExpensesIncomesTracker
