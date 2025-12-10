@@ -9,15 +9,12 @@ on:
 permissions:
   contents: write
   packages: write
-  pull-requests: write
 
 env:
   FLATLAF_VER: "3.6.2"
   MAIN_CLASS: "expense_income_tracker.ExpensesIncomesTracker"
   JAR_NAME: "ExpenseTracker.jar"
-  IMAGE_NAME: "expense-tracker"                   # image name (repo owner will prefix)
-  IMAGE_TAG_SHA: "${{ github.sha }}"
-  IMAGE_TAG_LATEST: "latest"
+  IMAGE_NAME: "expense-tracker"
 
 jobs:
   build-and-publish:
@@ -43,109 +40,66 @@ jobs:
           mkdir -p libs
           curl -L -o libs/flatlaf-${FLATLAF_VER}.jar \
             "https://repo1.maven.org/maven2/com/formdev/flatlaf/${FLATLAF_VER}/flatlaf-${FLATLAF_VER}.jar"
-          ls -la libs
 
-      - name: Compile Java sources (with libs on classpath)
+      - name: Compile Java sources
         run: |
           mkdir -p bin
-          # collect Java sources (adjust path if needed)
           find . -name "*.java" > sources.txt
-          # compile; include any jars in libs/
           javac -cp "libs/*" -d bin @sources.txt
-          echo "Compiled classes:"
-          find bin -type f | sed -n '1,40p'
 
-      - name: Create fat (uber) jar including FlatLaf
+      - name: Build fat jar
         run: |
-          set -eux
           rm -rf tmp_jar tmp_unzip meta
-          mkdir -p tmp_jar tmp_unzip
-          # copy compiled classes into tmp_jar
-          cp -r bin/* tmp_jar/ || true
-          # unzip dependencies into tmp_unzip
-          for j in libs/*.jar; do
-            unzip -q -o "$j" -d tmp_unzip
-          done
-          # copy dependency content into tmp_jar (overwrite allowed)
+          mkdir -p tmp_jar tmp_unzip meta
+
+          # Copy compiled classes
+          cp -r bin/* tmp_jar/
+
+          # Extract dependencies
+          for j in libs/*.jar; do unzip -q "$j" -d tmp_unzip; done
           cp -r tmp_unzip/* tmp_jar/ || true
-          # manifest
-          mkdir -p meta
+
+          # Manifest
           echo "Main-Class: ${MAIN_CLASS}" > meta/manifest.txt
+
           jar cfm ${JAR_NAME} meta/manifest.txt -C tmp_jar .
-          jar tf ${JAR_NAME} | sed -n '1,40p'
 
-      - name: Run the jar (smoke test)
+      - name: Smoke test jar
         run: |
-          # run the jar headless to avoid GUI blocking in CI
           java -Djava.awt.headless=true -jar ${JAR_NAME} || true
-          echo "Smoke run finished (exit code ignored)."
 
-      - name: Upload CI artifact (short-term)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ExpenseTracker-JAR
           path: ${JAR_NAME}
 
-      - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        with:
-          tag_name: v${{ github.run_number }}
-          release_name: ExpenseTracker-${{ github.run_number }}
-          body: Automated release of ExpenseTracker.jar
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload JAR to GitHub Release
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./${{ env.JAR_NAME }}
-          asset_name: ${{ env.JAR_NAME }}
-          asset_content_type: application/java-archive
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Ensure Dockerfile exists (create minimal Dockerfile if missing)
+      - name: Create minimal Dockerfile if missing
         run: |
-          # If your repo already has a Dockerfile, this step will not overwrite it.
           if [ ! -f Dockerfile ]; then
-            cat > Dockerfile <<'DOCKERFILE'
+            cat << 'EOF' > Dockerfile
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY ExpenseTracker.jar /app/ExpenseTracker.jar
-# Use non-root user if you prefer: USER 1000
 ENTRYPOINT ["java","-jar","/app/ExpenseTracker.jar"]
-DOCKERFILE
-            echo "Created minimal Dockerfile"
+EOF
+            echo "Created Dockerfile"
           else
-            echo "Dockerfile exists, leaving as-is"
+            echo "Dockerfile exists"
           fi
 
-      - name: Log in to GitHub Container Registry (GHCR)
+      - name: Log in to GHCR
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image (sha tag)
+      - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_SHA }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_LATEST }}
-          # optionally enable cache if you want:
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
-
-      - name: Write image info to summary
-        run: |
-          echo "Image pushed:"
-          echo " - ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_SHA }}"
-          echo " - ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_LATEST }}"
-
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
