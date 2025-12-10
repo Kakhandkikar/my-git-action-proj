@@ -20,11 +20,11 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Create bin folder
-      run: mkdir -p bin
-
     - name: Compile Java files
-      run: javac -d bin Expense_Income_Tracker/*.java
+      run: |
+        mkdir -p bin
+        find . -name "*.java" > sources.txt
+        javac -d bin @sources.txt
 
     - name: Package into JAR
       run: jar cfe ExpenseTracker.jar ExpenseIncomeTracker -C bin .
