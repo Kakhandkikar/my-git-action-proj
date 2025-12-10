@@ -11,36 +11,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # Step 1: Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # Step 2: Set up JDK
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
 
-    # Step 3: Create bin folder
     - name: Create bin folder
       run: mkdir -p bin
 
-    # Step 4: Compile Java files
     - name: Compile Java files
       run: javac -d bin Expense_Income_Tracker/*.java
 
-    # Step 5: Package into a JAR
     - name: Package into JAR
       run: jar cfe ExpenseTracker.jar ExpenseIncomeTracker -C bin .
 
-    # Step 6: Upload JAR as artifact
-    - name: Upload JAR
-      uses: actions/upload-artifact@v3
+    - name: Upload JAR as artifact
+      uses: actions/upload-artifact@v4
       with:
         name: ExpenseTracker
         path: ExpenseTracker.jar
 
-    # Step 7 (optional): Run the main class inside workflow
     - name: Run the application
       run: java -cp bin ExpenseIncomeTracker
