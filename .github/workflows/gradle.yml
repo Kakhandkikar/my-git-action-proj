@@ -1,4 +1,4 @@
-name: Build, Release & Docker Publish
+name: Build, Release & Docker Publish (Docker Hub)
 
 on:
   push:
@@ -14,7 +14,7 @@ env:
   FLATLAF_VER: "3.6.2"
   MAIN_CLASS: "expense_income_tracker.ExpensesIncomesTracker"
   JAR_NAME: "ExpenseTracker.jar"
-  IMAGE_NAME: "expense-tracker"
+  IMAGE_REPO: "${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}"
 
 jobs:
   build-and-publish:
@@ -40,6 +40,7 @@ jobs:
           mkdir -p libs
           curl -L -o libs/flatlaf-${FLATLAF_VER}.jar \
             "https://repo1.maven.org/maven2/com/formdev/flatlaf/${FLATLAF_VER}/flatlaf-${FLATLAF_VER}.jar"
+          ls -la libs
 
       - name: Compile Java sources
         run: |
@@ -51,17 +52,10 @@ jobs:
         run: |
           rm -rf tmp_jar tmp_unzip meta
           mkdir -p tmp_jar tmp_unzip meta
-
-          # Copy compiled classes
-          cp -r bin/* tmp_jar/
-
-          # Extract dependencies
+          cp -r bin/* tmp_jar/ || true
           for j in libs/*.jar; do unzip -q "$j" -d tmp_unzip; done
           cp -r tmp_unzip/* tmp_jar/ || true
-
-          # Manifest
           echo "Main-Class: ${MAIN_CLASS}" > meta/manifest.txt
-
           jar cfm ${JAR_NAME} meta/manifest.txt -C tmp_jar .
 
       - name: Smoke test jar
@@ -74,32 +68,55 @@ jobs:
           name: ExpenseTracker-JAR
           path: ${JAR_NAME}
 
-      - name: Create minimal Dockerfile if missing
+      - name: Create minimal Dockerfile if missing (safe)
         run: |
           if [ ! -f Dockerfile ]; then
-            cat << 'EOF' > Dockerfile
-FROM eclipse-temurin:17-jre
-WORKDIR /app
-COPY ExpenseTracker.jar /app/ExpenseTracker.jar
-ENTRYPOINT ["java","-jar","/app/ExpenseTracker.jar"]
-EOF
+            printf '%s\n' \
+              'FROM eclipse-temurin:17-jre' \
+              'WORKDIR /app' \
+              'COPY ExpenseTracker.jar /app/ExpenseTracker.jar' \
+              'ENTRYPOINT ["java","-jar","/app/ExpenseTracker.jar"]' \
+              > Dockerfile
             echo "Created Dockerfile"
           else
             echo "Dockerfile exists"
           fi
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         uses: docker/login-action@v2
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image to Docker Hub
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            docker.io/${{ env.IMAGE_REPO }}:latest
+            docker.io/${{ env.IMAGE_REPO }}:${{ github.sha }}
+          # optionally add platforms: linux/amd64,linux/arm64 to enable multi-arch
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: ExpenseTracker-${{ github.run_number }}
+          body: Automated release of ExpenseTracker.jar
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload JAR to GitHub Release
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./${{ env.JAR_NAME }}
+          asset_name: ${{ env.JAR_NAME }}
+          asset_content_type: application/java-archive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
